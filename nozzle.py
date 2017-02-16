@@ -62,7 +62,27 @@ def IntegrateInteriorPoint(pm, x1, r1, theta1, nu1, M1, x2, r2, theta2, nu2, M2)
 
 	return x3, r3, theta3, nu3
 
-def IntegrateExpansionWallPoint(pm, x2, r2, theta2, nu2, M2, RWallFunc):
+def IntersectExpansionWallPoint(x2, r2, theta2, nu2, M2, RWallFunc, xMax):
+
+	if x2 > xMax:
+		return None, None, None
+
+	mu2 = math.asin(1.0 / M2)
+	Kp2 = theta2 - nu2
+	drdxp2 = math.tan(theta2 + mu2)
+
+	print "IntersectExpWallPoint:", x2, r2, drdxp2
+	f = lambda x3: abs(r2 + drdxp2 * (x3 - x2) - RWallFunc(x3)[0])
+	#fprime = lambda x3: drdxp2 - RWallFunc(x3)[1]
+	x3, fval, ierr, numfunc = scipy.optimize.fminbound(f, x2, xMax, full_output = True)
+	print "Residual: ", fval
+	if x3 > xMax or fval > 0.01 * r2:
+		return None, None, None
+	r3 = r2 + drdxp2 * (x3 - x2)
+	theta3 = math.atan(RWallFunc(x3)[1])
+	return x3, r3, theta3
+
+def IntegrateExpansionWallPoint(pm, x2, r2, theta2, nu2, M2, x3, r3, theta3):
 	"""
 	Along C+ characteristics from P2, integrate C+ compatibility equation
 	to obtain condition at downstream wall point P3.
@@ -74,30 +94,16 @@ def IntegrateExpansionWallPoint(pm, x2, r2, theta2, nu2, M2, RWallFunc):
 	Kp2 = theta2 - nu2
 	drdxp2 = math.tan(theta2 + mu2)
 
-	print "IntegrateExpWallPoint:", x2, r2, drdxp2
-	f = lambda x3: abs(r2 + drdxp2 * (x3 - x2) - RWallFunc(x3)[0])
-	fprime = lambda x3: drdxp2 - RWallFunc(x3)[1]
-	#xopt = scipy.optimize.fmin_bfgs(f, x2, fprime = fprime)
-	xopt = scipy.optimize.fminbound(f, x2, 2.0)
-	x3 = xopt
-	print "Residual: ", f(x3)
-	r3 = r2 + drdxp2 * (x3 - x2)
-	theta3 = math.atan(RWallFunc(x3)[1])
-
-	print "Wall point found: ", x3, r3, RWallFunc(x3)[0]
-
 	dKpdr = -1.0 / (math.sqrt(M2 * M2 - 1.0) + 1.0 / math.tan(theta2)) / r2
 	Kp3 = Kp2 + dKpdr * (r3 - r2)
-
-	nu3    = theta3 - Kp3
+	nu3 = theta3 - Kp3
 
 	return x3, r3, theta3, nu3
 
 def IntegrateStraighteningWallPoint(pm, x1, r1, theta1, nu1, M1, x2, r2, theta2, nu2, M2):
 	"""
-	Along C+ characteristics from P2 to upstream wall point at P1,
-	integrate C+ compatibility equation to obtain condition at
-	downstream wall point P3.
+	Along C+ characteristics from P2, integrate C+ compatibility equation
+	to obtain condition at downstream wall point P3.
 	Note: we impose theta3 = theta2, which results in nu3 != nu2
 	in order to satisfy C+ compatibility relation.
 	"""
@@ -141,7 +147,7 @@ def IntegrateSymmetryPoint(pm, x1, r1, theta1, nu1, M1):
 
 	return x2, r2, theta2, nu2
 
-def RExpWall(x):
+def RExpWall2(x):
 
 	Rthroat = 0.2
 	Rexp = 2.5
@@ -153,18 +159,39 @@ def RExpWall(x):
 	drdx = (x + x0) / a
 	return r, drdx
 
+def RExpWall(x):
+
+	yThroat = 1.0
+
+	thetaInflection = 0.22838
+	x1 = 1.25413
+	a = - math.tan(thetaInflection) / 3.0 / x1 / x1
+	b = math.tan(thetaInflection) / x1
+	c = 0.01
+	d = yThroat
+
+	r = a * x * x * x + b * x * x + c * x + d
+	drdx = 3.0 * a * x * x + 2.0 * b * x + c
+
+	return r, drdx
+
 def Main():
 
 	pm = PM(1.4)
 
-	nptsExpansion = 80
+	nptsStreamwiseMax = 80
 	nptsSonicLine = 10
 
-	Rthroat = 0.2
-	xInflection = 0.6
+	Rthroat = 1.0
+	xInflection = 1.25413
+	MachExit = 4.0
 
-	#mesh = np.zeros((len(X) - 1, len(X), 5)) # (x, r, theta, nu, mach)
-	mesh = np.zeros((nptsExpansion, nptsSonicLine, 5)) # (x, r, theta, nu, mach)
+	print "Inflection point:"
+	rInflection, drdxInflection = RExpWall(xInflection)
+	thetaInflection = math.atan(drdxInflection)
+	print xInflection, rInflection, thetaInflection, pm.Mach(2.0 * thetaInflection)
+
+	mesh = np.zeros((nptsStreamwiseMax, nptsSonicLine, 5)) # (x, r, theta, nu, mach)
 
 	# Sonic line
 	x = 0.0
@@ -186,6 +213,8 @@ def Main():
 
 	# generic characteristics-tracing loop
 	idim, jdim = mesh.shape[0:2]
+	nptsStreamwise = nptsStreamwiseMax
+	nozzleExit = False
 	for i in range(1, idim):
 		if i % 2 == 1:
 			for j in range(0, jdim - 1):
@@ -198,16 +227,21 @@ def Main():
 			# Wall point
 			j = 0
 			x2, r2, theta2, nu2, M2 = mesh[i - 1, j, :]
-			if x2 < xInflection:
+			x3, r3, theta3 = IntersectExpansionWallPoint(x2, r2, theta2, nu2, M2, RExpWall, xInflection)
+			if x3 != None:
 				# Expansion section
-				x3, r3, theta3, nu3 = IntegrateExpansionWallPoint(pm, x2, r2, theta2, nu2, M2, RExpWall)
+				x3, r3, theta3, nu3 = IntegrateExpansionWallPoint(pm, x2, r2, theta2, nu2, M2, x3, r3, theta3)
 				M3 = pm.Mach(nu3)
 				mesh[i, j, :] = x3, r3, theta3, nu3, M3
 			else:
+				# Straightening section
 				x1, r1, theta1, nu1, M1 = mesh[i - 2, j, :]
 				x3, r3, theta3, nu3 = IntegrateStraighteningWallPoint(pm, x1, r1, theta1, nu1, M1, x2, r2, theta2, nu2, M2)
 				M3 = pm.Mach(nu3)
 				mesh[i, j, :] = x3, r3, theta3, nu3, M3
+				if theta3 < math.radians(1.0):
+					nozzleExit = True
+			print " %d: Nozzle wall Mach = %f at x = %f, r = %f, theta = %f deg" % (i, mesh[i, j, 4], x3, r3, math.degrees(theta3))
 
 			# Interior points
 			for j in range(1, jdim - 1):
@@ -223,11 +257,17 @@ def Main():
 			x2, r2, theta2, nu2 = IntegrateSymmetryPoint(pm, x1, r1, theta1, nu1, M1)
 			M2 = pm.Mach(nu2)
 			mesh[i, j, :] = x2, r2, theta2, nu2, M2
+			print " %d: Symmetry line Mach = %f at x = %f" % (i, M2, x2)
+			if M2 > MachExit:
+				nozzleExit = True
+		if nozzleExit:
+			nptsStreamwise = i
+			break
 
 	for j in range(nptsSonicLine):
 		if j < nptsSonicLine - 1:
 			xx, rr = [], []
-			for i in range(0, nptsExpansion, 2):
+			for i in range(0, nptsStreamwise, 2):
 				xx.append(mesh[i, j, 0])
 				rr.append(mesh[i, j, 1])
 				xx.append(mesh[i + 1, j, 0])
@@ -235,7 +275,7 @@ def Main():
 			plt.plot(xx, rr)
 		if j > 0:
 			xx, rr = [], []
-			for i in range(0, nptsExpansion, 2):
+			for i in range(0, nptsStreamwise, 2):
 				xx.append(mesh[i, j, 0])
 				rr.append(mesh[i, j, 1])
 				xx.append(mesh[i + 1, j - 1, 0])
