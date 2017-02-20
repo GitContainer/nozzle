@@ -4,6 +4,28 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 gamma = 1.4
+R_THROAT = 1.0
+X_INFLECTION = 1.0
+THETA_INFLECTION = 0.1
+MACH_EXIT = 2.0
+THETA_EXIT = 0.5
+
+def RWallEquation(x, yThroat, xInflection, thetaInflection):
+
+	x1 = xInflection
+	a = -math.tan(thetaInflection) / 3.0 / x1 / x1
+	b = math.tan(thetaInflection) / x1
+	c = 0.01
+	d = yThroat
+
+	r = a * x * x * x + b * x * x + c * x + d
+	drdx = 3.0 * a * x * x + 2.0 * b * x + c
+
+	return r, drdx
+
+def RExpWall(x):
+
+	return RWallEquation(x, R_THROAT, X_INFLECTION, THETA_INFLECTION)
 
 class PM(object):
 
@@ -147,34 +169,6 @@ def IntegrateSymmetryPoint(pm, x1, r1, theta1, nu1, M1):
 
 	return x2, r2, theta2, nu2
 
-def RExpWall2(x):
-
-	Rthroat = 0.2
-	Rexp = 2.5
-	x0 = 0.1 * Rthroat
-	print "RExpWall: x = ", x
-	a = math.sqrt(Rexp * Rexp - (x + x0) * (x + x0))
-	b = Rexp * math.cos(math.asin(x0 / Rexp)) + Rthroat
-	r = b - a
-	drdx = (x + x0) / a
-	return r, drdx
-
-def RExpWall(x):
-
-	yThroat = 1.0
-
-	thetaInflection = 0.22838
-	x1 = 1.25413
-	a = - math.tan(thetaInflection) / 3.0 / x1 / x1
-	b = math.tan(thetaInflection) / x1
-	c = 0.01
-	d = yThroat
-
-	r = a * x * x * x + b * x * x + c * x + d
-	drdx = 3.0 * a * x * x + 2.0 * b * x + c
-
-	return r, drdx
-
 def Main():
 
 	pm = PM(1.4)
@@ -182,14 +176,9 @@ def Main():
 	nptsStreamwiseMax = 80
 	nptsSonicLine = 10
 
-	Rthroat = 1.0
-	xInflection = 1.25413
-	MachExit = 4.0
-
 	print "Inflection point:"
-	rInflection, drdxInflection = RExpWall(xInflection)
-	thetaInflection = math.atan(drdxInflection)
-	print xInflection, rInflection, thetaInflection, pm.Mach(2.0 * thetaInflection)
+	rInflection, drdxInflection = RExpWall(X_INFLECTION)
+	print X_INFLECTION, rInflection, THETA_INFLECTION, pm.Mach(2.0 * THETA_INFLECTION)
 
 	mesh = np.zeros((nptsStreamwiseMax, nptsSonicLine, 5)) # (x, r, theta, nu, mach)
 
@@ -206,7 +195,7 @@ def Main():
 	for j in range(1, nptsSonicLine - 1):
 		xi = float(j) / float(nptsSonicLine - 1)
 		x = 0.0
-		r = (1.0 - xi) * Rthroat + xi * 0.0
+		r = (1.0 - xi) * R_THROAT + xi * 0.0
 		theta = (1.0 - xi) * mesh[0, 0, 2] + xi * 0.0
 		nu, M = mesh[0, 0, 3:5]
 		mesh[0, j, :] = x, r, theta, nu, M
@@ -227,7 +216,7 @@ def Main():
 			# Wall point
 			j = 0
 			x2, r2, theta2, nu2, M2 = mesh[i - 1, j, :]
-			x3, r3, theta3 = IntersectExpansionWallPoint(x2, r2, theta2, nu2, M2, RExpWall, xInflection)
+			x3, r3, theta3 = IntersectExpansionWallPoint(x2, r2, theta2, nu2, M2, RExpWall, X_INFLECTION)
 			if x3 != None:
 				# Expansion section
 				x3, r3, theta3, nu3 = IntegrateExpansionWallPoint(pm, x2, r2, theta2, nu2, M2, x3, r3, theta3)
@@ -239,7 +228,7 @@ def Main():
 				x3, r3, theta3, nu3 = IntegrateStraighteningWallPoint(pm, x1, r1, theta1, nu1, M1, x2, r2, theta2, nu2, M2)
 				M3 = pm.Mach(nu3)
 				mesh[i, j, :] = x3, r3, theta3, nu3, M3
-				if theta3 < math.radians(1.0):
+				if theta3 < math.radians(THETA_EXIT):
 					nozzleExit = True
 			print " %d: Nozzle wall Mach = %f at x = %f, r = %f, theta = %f deg" % (i, mesh[i, j, 4], x3, r3, math.degrees(theta3))
 
@@ -258,7 +247,7 @@ def Main():
 			M2 = pm.Mach(nu2)
 			mesh[i, j, :] = x2, r2, theta2, nu2, M2
 			print " %d: Symmetry line Mach = %f at x = %f" % (i, M2, x2)
-			if M2 > MachExit:
+			if M2 > MACH_EXIT:
 				nozzleExit = True
 		if nozzleExit:
 			nptsStreamwise = i
@@ -282,12 +271,34 @@ def Main():
 				rr.append(mesh[i + 1, j - 1, 1])
 			plt.plot(xx, rr)
 
-	xx = np.linspace(0.0, xInflection, 10)
+	"""
+	for j in range(nptsSonicLine):
+		jj = j
+		if j < nptsSonicLine - 1:
+			xr = []
+			xr.append(mesh[i, j, 0:2])
+			dj = 0
+			for i in range(1, nptsStreamwise):
+				dj = 0 if i % 2 == 1 else 1
+				xr.append(mesh[i, jj + dj, 0:2])
+	"""
+
+	xx = np.linspace(0.0, X_INFLECTION, 10)
 	rr = []
 	for i in range(10):
 		rr.append(RExpWall(xx[i])[0])
 	plt.plot(xx, rr)
 
+	xr = []
+	for i in range(0, nptsStreamwise, 2):
+		if i % 2 == 1:
+			continue
+		xr.append(mesh[i, 0, 0:2])
+	xr = np.array(xr)
+	np.savetxt("nozzle_wall.csv", xr, delimiter = ",")
+	plt.plot(xr[:, 0], xr[:, 1], color = "black", linewidth = 2)
+
+	plt.axes().set_aspect("equal")
 	plt.show()
 
 if __name__ == "__main__":
