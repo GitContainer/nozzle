@@ -186,17 +186,23 @@ def Main():
 	x = 0.0
 	r, drdx = RExpWall(x)
 	theta = math.atan(drdx)
+	r_sonicline = R_THROAT / math.sin(theta)
+	x0_sonicline = -R_THROAT / math.tan(theta) # x coord of the center of the sonic line arc
 	nu = theta
 	M = pm.Mach(nu)
-	print x, r, math.degrees(theta), M
+	print x, r, math.degrees(theta), r_sonicline, x0_sonicline, M
 
 	mesh[0, 0, :] = x, r, theta, nu, M
 	mesh[0, -1, :] = 0.0, 0.0, 0.0, nu, M
 	for j in range(1, nptsSonicLine - 1):
 		xi = float(j) / float(nptsSonicLine - 1)
+		theta = (1.0 - xi) * mesh[0, 0, 2] + xi * 0.0
+		"""
 		x = 0.0
 		r = (1.0 - xi) * R_THROAT + xi * 0.0
-		theta = (1.0 - xi) * mesh[0, 0, 2] + xi * 0.0
+		"""
+		x = x0_sonicline + r_sonicline * math.cos(theta)
+		r = r_sonicline * math.sin(theta)
 		nu, M = mesh[0, 0, 3:5]
 		mesh[0, j, :] = x, r, theta, nu, M
 
